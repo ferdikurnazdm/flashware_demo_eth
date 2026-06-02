@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<azone>
+    <rzone name="R7FA6M2AF3CFB.rzone"/>
+    <partition>
+        <peripheral name="PORT1.CM4" group="PORT">
+            <slot name="P108.CM4" secure="false"/>
+            <slot name="P109.CM4" secure="false"/>
+            <slot name="P110.CM4" secure="false"/>
+        </peripheral>
+        <peripheral name="PORT2.CM4" group="PORT">
+            <slot name="P210.CM4" secure="false"/>
+        </peripheral>
+        <peripheral name="PORT3.CM4" group="PORT">
+            <slot name="P300.CM4" secure="false"/>
+        </peripheral>
+        <peripheral name="PORT4.CM4" group="PORT">
+            <slot name="P401.CM4" secure="false"/>
+            <slot name="P402.CM4" secure="false"/>
+            <slot name="P408.CM4" secure="false"/>
+            <slot name="P409.CM4" secure="false"/>
+            <slot name="P410.CM4" secure="false"/>
+            <slot name="P411.CM4" secure="false"/>
+            <slot name="P412.CM4" secure="false"/>
+            <slot name="P413.CM4" secure="false"/>
+            <slot name="P414.CM4" secure="false"/>
+            <slot name="P415.CM4" secure="false"/>
+        </peripheral>
+        <peripheral name="ETHERC0.CM4" group="ETHERC" security=""/>
+        <peripheral name="ICU.CM4">
+            <slot name="IRQ0.CM4" secure="false"/>
+        </peripheral>
+    </partition>
+</azone>
