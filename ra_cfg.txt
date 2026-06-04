@@ -507,3 +507,9 @@ FSP Configuration
     Queue Length (Items): 256
     Memory Allocation: Static
     
+  Object "g_output_queue Queue"
+    Symbol: g_output_queue
+    Item Size (Bytes): 256
+    Queue Length (Items): 4
+    Memory Allocation: Static
+    

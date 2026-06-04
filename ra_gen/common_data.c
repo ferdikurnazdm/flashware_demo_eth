@@ -104,6 +104,12 @@ StaticQueue_t g_input_queue_memory;
 uint8_t g_input_queue_queue_memory[4 * 256];
 #endif
 void rtos_startup_err_callback(void *p_instance, void *p_data);
+QueueHandle_t g_output_queue;
+#if 1
+StaticQueue_t g_output_queue_memory;
+uint8_t g_output_queue_queue_memory[256 * 4];
+#endif
+void rtos_startup_err_callback(void *p_instance, void *p_data);
 void g_common_init(void)
 {
     g_input_queue =
@@ -122,5 +128,22 @@ void g_common_init(void)
     if (NULL == g_input_queue)
     {
         rtos_startup_err_callback (g_input_queue, 0);
+    }
+    g_output_queue =
+#if 1
+            xQueueCreateStatic (
+#else
+                xQueueCreate(
+                #endif
+                                4,
+                                256
+#if 1
+                                ,
+                                &g_output_queue_queue_memory[0], &g_output_queue_memory
+#endif
+                                );
+    if (NULL == g_output_queue)
+    {
+        rtos_startup_err_callback (g_output_queue, 0);
     }
 }

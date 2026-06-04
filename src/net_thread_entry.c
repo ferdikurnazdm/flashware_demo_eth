@@ -1,100 +1,107 @@
+/******************************************************************************
+ *
+ * TCP FACTORIAL SERVER - NET THREAD
+ *
+ * Bu thread sadece TCP haberleşmesinden sorumludur.
+ *
+ * İş Akışı:
+ * 1- TCP server oluşturulur.
+ * 2- Client bağlantısı beklenir.
+ * 3- Client'tan gelen komut alınır.
+ * 4- Gelen komut g_input_queue üzerinden job_thread'e gönderilir.
+ * 5- job_thread sonucu hesaplar ve g_output_queue'ye yazar.
+ * 6- Sonuç tekrar TCP client'a gönderilir.
+ *
+ * Hesaplama işlemleri burada yapılmaz.
+ * Hesaplama tamamen job_thread içerisindedir.
+ *
+ ******************************************************************************/
+
 #include <net_thread.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <stdint.h>
 
-/* Aynı anda bekleyebilecek bağlantı sayısı */
-#define BACKLOG_COUNT   5
+#define BACKLOG_COUNT      5
+#define BUF_SIZE           256
+#define SERVER_PORT        9999
+#define RESULT_TEXT_SIZE   256
 
-/* TCP veri alma buffer boyutu */
-#define BUF_SIZE        256
+#define DEBUG_LED_PIN      BSP_IO_PORT_02_PIN_10 //P200 pini
+#define DEBUG_LED_ON   true
+#define DEBUG_LED_OFF  false
 
-/* TCP server port */
-#define SERVER_PORT     9999
+extern QueueHandle_t g_input_queue;
+extern QueueHandle_t g_output_queue;
 
-/* Statik IP ayarları */
 const uint8_t ucIPAddress[4]        = {192, 168, 1, 118};
 const uint8_t ucNetMask[4]          = {255, 255, 255, 0};
 const uint8_t ucGatewayAddress[4]   = {192, 168, 1, 1};
 const uint8_t ucDNSServerAddress[4] = {192, 168, 1, 1};
-
-/* Ethernet MAC adresi */
 const uint8_t ucMACAddress[6]       = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
 
-/* Job thread'e gönderilecek komut tipi, (Yeni eklendi). */
-typedef enum
-{
-    INPUT_CMD_OFF = 0,
-    INPUT_CMD_ON
-} input_cmd_t;
-
-/*
- * g_input_queue daha önce oluşturulduğu için burada extern kullanıyoruz.
- * Queue oluşturma işlemi FSP configurator veya başka dosyada olmalı.(Yeni eklendi)
- */
-extern QueueHandle_t g_input_queue;
-
-/* Server socket */
 Socket_t xSocket;
-
-/* Client socket */
 Socket_t xClientSocket;
 
-/* Server bind adres yapısı */
 struct freertos_sockaddr xBindAddress;
-
-/* Client adres bilgisi */
 struct freertos_sockaddr xClientAddress;
-
-/* Client adres uzunluğu */
 socklen_t xClientAddressLength;
 
-/* Network hazır bilgisi */
 volatile bool network_up = false;
 
-/*
- * IP stack network durum callback'i
- * Eğer bu fonksiyon başka dosyada zaten varsa buradan kaldır.
- */
+/******************************************************************************
+ *
+ * FreeRTOS+TCP tarafından çağrılır.
+ *
+ * Ethernet link ve IP durumunu takip etmek için kullanılır.
+ * Network ayağa kalktığında network_up=true olur.
+ *
+ ******************************************************************************/
+
 void vApplicationIPNetworkEventHook(eIPCallbackEvent_t eNetworkEvent)
 {
-    if (eNetworkEvent == eNetworkUp)
-    {
-        network_up = true;
-    }
-    else
-    {
-        network_up = false;
-    }
+    network_up = (eNetworkEvent == eNetworkUp);
 }
 
-/* Gelen string sonundaki \r \n ve boşluk karakterlerini siler. */
-static void trim_command(char *str)
+
+/******************************************************************************
+ *
+ * Debug amaçlı LED kontrol fonksiyonu
+ *
+ * state = true  -> LED ON
+ * state = false -> LED OFF
+ *
+ ******************************************************************************/
+
+static void debug_led_set(bool state)
 {
-    int len = (int) strlen(str);
-
-    while (len > 0)
-    {
-        if ((str[len - 1] == '\r') ||
-            (str[len - 1] == '\n') ||
-            (str[len - 1] == ' '))
-        {
-            str[len - 1] = '\0';
-            len--;
-        }
-        else
-        {
-            break;
-        }
-    }
+    R_IOPORT_PinWrite(&g_ioport_ctrl,
+                      DEBUG_LED_PIN,
+                      state ?
+                      BSP_IO_LEVEL_HIGH :
+                      BSP_IO_LEVEL_LOW);
 }
 
-/*
- * Client ile haberleşme fonksiyonu
- * Burada gelen on/off mesajı queue üzerinden job_thread'e gönderilir.(Mesajlar da düzenleme yapıldı).
- */
+/******************************************************************************
+ *
+ * Bağlanan TCP client ile haberleşmeyi yönetir.
+ *
+ * Görevleri:
+ * - Karşılama mesajı gönderir
+ * - Gelen TCP verisini okur
+ * - Veriyi job_thread'e iletir
+ * - Sonucu bekler
+ * - Sonucu client'a geri gönderir
+ *
+ * Client bağlantısı kapanana kadar döngü devam eder.
+ *
+ ******************************************************************************/
+
 static void handle_client_connection(void)
 {
     char pcRxBuffer[BUF_SIZE];
+    char result_text[RESULT_TEXT_SIZE];
 
     BaseType_t lBytes;
     BaseType_t xSentBytes;
@@ -102,7 +109,8 @@ static void handle_client_connection(void)
     TickType_t xReceiveTimeOut = portMAX_DELAY;
     TickType_t xSendTimeOut    = pdMS_TO_TICKS(1000);
 
-    const char *welcomeMessage = "Baglanti kuruldu. Komutlar: on / off\r\n";
+    const char *welcomeMessage =
+        "Baglanti kuruldu. Faktoriyel icin tam sayi gonderin\r\n";
 
     FreeRTOS_setsockopt(xClientSocket,
                         0,
@@ -124,87 +132,111 @@ static void handle_client_connection(void)
     while (1)
     {
         memset(pcRxBuffer, 0, sizeof(pcRxBuffer));
+        memset(result_text, 0, sizeof(result_text));
 
         lBytes = FreeRTOS_recv(xClientSocket,
                                pcRxBuffer,
                                BUF_SIZE - 1,
                                0);
+        /*
+         * Client'tan veri alınır.
+         *
+         * Dönen değer:
+         * >0 : Alınan byte sayısı
+         *  0 : Bağlantı kapandı
+         * <0 : Hata oluştu
+         */
 
-        if (lBytes > 0)
-        {
-            pcRxBuffer[lBytes] = '\0';
-
-            trim_command(pcRxBuffer);
-
-            input_cmd_t cmd;
-            const char *replyMessage;
-
-            if ((strcmp(pcRxBuffer, "on") == 0) ||
-                (strcmp(pcRxBuffer, "ON") == 0))
-            {
-                cmd = INPUT_CMD_ON;
-
-                if (xQueueSend(g_input_queue,
-                               &cmd,
-                               pdMS_TO_TICKS(100)) == pdTRUE)
-                {
-                    replyMessage = "OK: LED ON komutu job_thread'e gonderildi\r\n";
-                }
-                else
-                {
-                    replyMessage = "ERROR: Queue dolu, komut gonderilemedi\r\n";
-                }
-            }
-            else if ((strcmp(pcRxBuffer, "off") == 0) ||
-                     (strcmp(pcRxBuffer, "OFF") == 0))
-            {
-                cmd = INPUT_CMD_OFF;
-
-                if (xQueueSend(g_input_queue,
-                               &cmd,
-                               pdMS_TO_TICKS(100)) == pdTRUE)
-                {
-                    replyMessage = "OK: LED OFF komutu job_thread'e gonderildi\r\n";
-                }
-                else
-                {
-                    replyMessage = "ERROR: Queue dolu, komut gonderilemedi\r\n";
-                }
-            }
-            else
-            {
-                replyMessage = "ERROR: sadece on veya off gonder\r\n";
-            }
-
-            xSentBytes = FreeRTOS_send(xClientSocket,
-                                       replyMessage,
-                                       strlen(replyMessage),
-                                       0);
-
-            if (xSentBytes <= 0)
-            {
-                break;
-            }
-        }
-        else if (lBytes == 0)
+        if (lBytes <= 0)
         {
             break;
         }
+
+        pcRxBuffer[lBytes] = '\0';
+
+        /*
+         * TCP'den gelen ham komut doğrudan job_thread'e gönderilir.
+         *
+         * Örnek:
+         * Client --> "5"
+         * Client --> "FACTORIAL 5"
+         * Client --> "HELP"
+         *
+         * Komutun anlamlandırılması job_thread tarafından yapılır.
+         */
+
+        if (xQueueSend(g_input_queue,
+                       pcRxBuffer,
+                       pdMS_TO_TICKS(100)) != pdTRUE)
+        {
+            const char *queueError =
+                "ERROR: g_input_queue dolu\r\n";
+
+            FreeRTOS_send(xClientSocket,
+                          queueError,
+                          strlen(queueError),
+                          0);
+
+            continue;
+        }
+        /*
+         * job_thread'den cevap beklenir.
+         *
+         * Maksimum bekleme süresi:
+         * 5000 ms
+         *
+         * Eğer cevap gelmezse timeout hatası client'a gönderilir.
+         */
+        if (xQueueReceive(g_output_queue,
+                          result_text,
+                          pdMS_TO_TICKS(5000)) == pdTRUE)
+        {
+            xSentBytes = FreeRTOS_send(xClientSocket,
+                                       result_text,
+                                       strlen(result_text),
+                                       0);
+        }
         else
+        {
+            const char *timeoutError =
+                "ERROR: job_thread cevap vermedi\r\n";
+
+            xSentBytes = FreeRTOS_send(xClientSocket,
+                                       timeoutError,
+                                       strlen(timeoutError),
+                                       0);
+        }
+
+        if (xSentBytes <= 0)
         {
             break;
         }
     }
 }
 
-/*
- * FreeRTOS tarafından çağrılan net_thread ana fonksiyonu.
- */
+/******************************************************************************
+ *
+ * NET THREAD ANA GÖREVİ
+ *
+ * Görev sırası:
+ *
+ * 1- FreeRTOS+TCP stack başlatılır
+ * 2- Ethernet/IP hazır olana kadar beklenir
+ * 3- TCP server socket oluşturulur
+ * 4- Port 9999'a bind edilir
+ * 5- Listen durumuna alınır
+ * 6- Client bağlantıları kabul edilir
+ * 7- Her client için handle_client_connection() çağrılır
+ *
+ ******************************************************************************/
+
 void net_thread_entry(void *pvParameters)
 {
     FSP_PARAMETER_NOT_USED(pvParameters);
 
     BaseType_t status;
+
+    debug_led_set(DEBUG_LED_OFF);
 
     status = FreeRTOS_IPInit(ucIPAddress,
                              ucNetMask,
@@ -221,7 +253,17 @@ void net_thread_entry(void *pvParameters)
     {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
-
+    /*
+     * Yeni TCP bağlantısı beklenir.
+     *
+     * Başarılı olursa:
+     * - Debug LED yakılır
+     * - Client haberleşmesi başlatılır
+     *
+     * Bağlantı sonlanınca:
+     * - Socket kapatılır
+     * - Debug LED söndürülür
+     */
     xSocket = FreeRTOS_socket(FREERTOS_AF_INET,
                               FREERTOS_SOCK_STREAM,
                               FREERTOS_IPPROTO_TCP);
@@ -244,7 +286,8 @@ void net_thread_entry(void *pvParameters)
         __BKPT(0);
     }
 
-    if (FreeRTOS_listen(xSocket, BACKLOG_COUNT) != 0)
+    if (FreeRTOS_listen(xSocket,
+                        BACKLOG_COUNT) != 0)
     {
         __BKPT(0);
     }
@@ -259,12 +302,28 @@ void net_thread_entry(void *pvParameters)
 
         if (xClientSocket != FREERTOS_INVALID_SOCKET)
         {
-            handle_client_connection();
+            debug_led_set(DEBUG_LED_ON);
 
-            FreeRTOS_shutdown(xClientSocket, FREERTOS_SHUT_RDWR);
+            handle_client_connection();
+            /*
+             * Client bağlantısını düzgün şekilde sonlandır.
+             *
+             * Önce shutdown:
+             * - TCP FIN gönderilir
+             *
+             * Sonra socket kapatılır.
+             */
+            FreeRTOS_shutdown(xClientSocket,
+                              FREERTOS_SHUT_RDWR);
+
+
             FreeRTOS_closesocket(xClientSocket);
 
             xClientSocket = FREERTOS_INVALID_SOCKET;
+
+            debug_led_set(DEBUG_LED_OFF);
+
+
         }
         else
         {
