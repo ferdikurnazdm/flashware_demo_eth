@@ -305,6 +305,12 @@
       <property id="rtos.awsfreertos.object.queue.queue_length" value="256"/>
       <property id="rtos.awsfreertos.object.queue.allocation" value="rtos.awsfreertos.object.queue.allocation.static"/>
     </object>
+    <object id="rtos.awsfreertos.object.queue.38303509">
+      <property id="rtos.awsfreertos.object.queue.symbol" value="g_output_queue"/>
+      <property id="rtos.awsfreertos.object.queue.item_size" value="256"/>
+      <property id="rtos.awsfreertos.object.queue.queue_length" value="4"/>
+      <property id="rtos.awsfreertos.object.queue.allocation" value="rtos.awsfreertos.object.queue.allocation.static"/>
+    </object>
     <context id="_hal.0">
       <stack module="module.driver.ioport_on_ioport.0"/>
       <stack module="module.middleware.rm_freertos_port.0"/>
